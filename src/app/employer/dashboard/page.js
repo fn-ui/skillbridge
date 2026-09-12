@@ -1,20 +1,21 @@
 "use client";
 
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
+import DashboardLayout from "@/components/dashboard/DashboardLayout";
 import { useAuth } from "@/contexts/AuthContext";
 
 function EmployerDashboardContent() {
   const { profile } = useAuth();
 
   return (
-    <main className="min-h-screen bg-[#080b12] px-6 py-10 text-white">
-      <div className="mx-auto max-w-6xl">
-        <p className="mb-2 text-sm uppercase tracking-[0.2em] text-[#f5c451]">
+    <DashboardLayout role="employer">
+      <div>
+        <p className="text-sm uppercase tracking-[0.2em] text-[#f5c451]">
           Employer Workspace
         </p>
 
-        <h1 className="text-4xl font-bold">
-          Welcome, {profile.full_name || "Employer"}
+        <h1 className="mt-2 text-3xl font-bold sm:text-4xl">
+          Welcome, {profile?.full_name || "Employer"}
         </h1>
 
         <p className="mt-3 max-w-2xl text-gray-400">
@@ -38,7 +39,7 @@ function EmployerDashboardContent() {
           </div>
         </div>
       </div>
-    </main>
+    </DashboardLayout>
   );
 }
 
