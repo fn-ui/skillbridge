@@ -88,8 +88,10 @@ export default function StudentOpportunitiesPage() {
         supabase
           .from("opportunities")
           .select(
-            "id, title, description, location, opportunity_type, deadline, application_url, company_id, created_at"
+            "id, title, description, location, opportunity_type, deadline, application_url, company_id, created_at, status"
           )
+          .eq("status", "published")
+          
           .order("created_at", { ascending: false }),
 
         supabase
