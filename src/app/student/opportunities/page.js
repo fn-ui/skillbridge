@@ -55,6 +55,38 @@ function getTypeLabel(type) {
   return type.charAt(0).toUpperCase() + type.slice(1).toLowerCase();
 }
 
+function calculateSkillMatch(requiredSkills, studentSkills) {
+  if (!requiredSkills || requiredSkills.length === 0) {
+    return {
+      percentage: null,
+      matchedSkills: [],
+      missingSkills: [],
+    };
+  }
+
+  const studentSkillIds = new Set(
+    studentSkills.map((skill) => skill.id)
+  );
+
+  const matchedSkills = requiredSkills.filter((skill) =>
+    studentSkillIds.has(skill.id)
+  );
+
+  const missingSkills = requiredSkills.filter(
+    (skill) => !studentSkillIds.has(skill.id)
+  );
+
+  const percentage = Math.round(
+    (matchedSkills.length / requiredSkills.length) * 100
+  );
+
+  return {
+    percentage,
+    matchedSkills,
+    missingSkills,
+  };
+}
+
 export default function StudentOpportunitiesPage() {
   const { user } = useAuth();
 
@@ -63,6 +95,7 @@ export default function StudentOpportunitiesPage() {
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("All types");
   const [locationFilter, setLocationFilter] = useState("");
+  const [sortBy, setSortBy] = useState("latest");
   const [selectedOpportunity, setSelectedOpportunity] = useState(null);
   const [loading, setLoading] = useState(true);
   const [applyingId, setApplyingId] = useState(null);
@@ -84,6 +117,7 @@ export default function StudentOpportunitiesPage() {
         opportunitySkillsResult,
         skillsResult,
         applicationsResult,
+        userSkillsResult,
       ] = await Promise.all([
         supabase
           .from("opportunities")
@@ -110,6 +144,11 @@ export default function StudentOpportunitiesPage() {
           .from("applications")
           .select("id, opportunity_id, status, applied_at")
           .eq("student_id", user.id),
+
+        supabase
+          .from("user_skills")
+          .select("id, skill_id, proficiency")
+          .eq("user_id", user.id),
       ]);
 
       if (!active) return;
@@ -120,6 +159,7 @@ export default function StudentOpportunitiesPage() {
         opportunitySkillsResult,
         skillsResult,
         applicationsResult,
+        userSkillsResult,
       ];
 
       const failedResult = results.find((result) => result.error);
@@ -133,6 +173,13 @@ export default function StudentOpportunitiesPage() {
       const companies = companiesResult.data || [];
       const skillLinks = opportunitySkillsResult.data || [];
       const skills = skillsResult.data || [];
+      const studentSkillLinks = userSkillsResult.data || [];
+
+      const studentSkills = studentSkillLinks
+        .map((entry) =>
+          skills.find((skill) => skill.id === entry.skill_id)
+        )
+        .filter(Boolean);
 
       const companyById = new Map(
         companies.map((company) => [company.id, company])
@@ -154,16 +201,23 @@ export default function StudentOpportunitiesPage() {
         skillsByOpportunity.get(link.opportunity_id).push(skill);
       }
 
-      const mappedOpportunities = (
-        opportunitiesResult.data || []
-      )
+      const mappedOpportunities = (opportunitiesResult.data || [])
         .filter((item) => !isExpired(item.deadline))
-        .map((item) => ({
-          ...item,
-          company: companyById.get(item.company_id) || null,
-          requiredSkills:
-            skillsByOpportunity.get(item.id) || [],
-        }));
+        .map((item) => {
+          const requiredSkills = skillsByOpportunity.get(item.id) || [];
+
+          const skillMatch = calculateSkillMatch(
+            requiredSkills,
+            studentSkills
+          );
+
+          return {
+            ...item,
+            company: companyById.get(item.company_id) || null,
+            requiredSkills,
+            ...skillMatch,
+          };
+        });
 
       setOpportunities(mappedOpportunities);
       setApplications(applicationsResult.data || []);
@@ -182,36 +236,51 @@ export default function StudentOpportunitiesPage() {
     [applications]
   );
 
-  const filteredOpportunities = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    const locationTerm = locationFilter.trim().toLowerCase();
+const filteredOpportunities = useMemo(() => {
+  const term = search.trim().toLowerCase();
+  const locationTerm = locationFilter.trim().toLowerCase();
 
-    return opportunities.filter((item) => {
-      const searchableText = [
-        item.title,
-        item.description,
-        item.company?.name,
-        ...(item.requiredSkills || []).map((skill) => skill.name),
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
+  const filtered = opportunities.filter((item) => {
+    const searchableText = [
+      item.title,
+      item.description,
+      item.company?.name,
+      ...(item.requiredSkills || []).map((skill) => skill.name),
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
 
-      const matchesSearch =
-        !term || searchableText.includes(term);
+    const matchesSearch =
+      !term || searchableText.includes(term);
 
-      const matchesType =
-        typeFilter === "All types" ||
-        getTypeLabel(item.opportunity_type).toLowerCase() ===
-          typeFilter.toLowerCase();
+    const matchesType =
+      typeFilter === "All types" ||
+      getTypeLabel(item.opportunity_type).toLowerCase() ===
+        typeFilter.toLowerCase();
 
-      const matchesLocation =
-        !locationTerm ||
-        (item.location || "").toLowerCase().includes(locationTerm);
+    const matchesLocation =
+      !locationTerm ||
+      (item.location || "").toLowerCase().includes(locationTerm);
 
-      return matchesSearch && matchesType && matchesLocation;
-    });
-  }, [opportunities, search, typeFilter, locationFilter]);
+    return matchesSearch && matchesType && matchesLocation;
+  });
+
+  return [...filtered].sort((a, b) => {
+    if (sortBy === "best-match") {
+      return (b.percentage ?? -1) - (a.percentage ?? -1);
+    }
+
+    if (sortBy === "lowest-match") {
+      return (a.percentage ?? 101) - (b.percentage ?? 101);
+    }
+
+    return (
+      new Date(b.created_at).getTime() -
+      new Date(a.created_at).getTime()
+    );
+  });
+}, [opportunities, search, typeFilter, locationFilter, sortBy]);
 
   async function applyToOpportunity(opportunity) {
     if (!user?.id) return;
@@ -330,7 +399,7 @@ export default function StudentOpportunitiesPage() {
               </p>
             </div>
 
-            <div className="grid gap-3 rounded-2xl border border-white/10 bg-[#111722] p-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-3 rounded-2xl border border-white/10 bg-[#111722] p-4 sm:grid-cols-2 lg:grid-cols-5">
               <div className="relative sm:col-span-2 lg:col-span-2">
                 <Search
                   size={18}
@@ -377,15 +446,29 @@ export default function StudentOpportunitiesPage() {
                 placeholder="Filter by location"
                 aria-label="Filter by location"
               />
+              <select
+                className={inputClass}
+                value={sortBy}
+                onChange={(event) => setSortBy(event.target.value)}
+                aria-label="Sort opportunities"
+              >
+                <option value="latest">Latest opportunities</option>
+                <option value="best-match">Best skill match</option>
+                <option value="lowest-match">Lowest skill match</option>
+              </select>
             </div>
           </section>
 
           <section>
             <div className="mb-5 flex items-center justify-between gap-4">
               <h2 className="text-lg font-semibold text-white">
-                {search || locationFilter || typeFilter !== "All types"
-                  ? "Search results"
-                  : "Latest opportunities"}
+                {sortBy === "best-match"
+                  ? "Your best matches"
+                  : sortBy === "lowest-match"
+                    ? "Opportunities to grow your skills"
+                    : search || locationFilter || typeFilter !== "All types"
+                      ? "Search results"
+                      : "Latest opportunities"}
               </h2>
 
               <span className="text-sm text-gray-500">
@@ -509,6 +592,100 @@ export default function StudentOpportunitiesPage() {
                           </div>
                         </div>
                       )}
+
+                      {/* SKILL MATCHING */}
+                    <div className="mt-5 rounded-xl border border-[#f5c451]/15 bg-[#0b1019] p-4">
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2">
+                          <Sparkles size={16} className="text-[#f5c451]" />
+                          <span className="text-sm font-semibold text-white">
+                            Your skill match
+                          </span>
+                        </div>
+
+                        {opportunity.percentage !== null ? (
+                          <span
+                            className={`text-lg font-bold ${
+                              opportunity.percentage >= 70
+                                ? "text-emerald-400"
+                                : opportunity.percentage >= 40
+                                  ? "text-[#f5c451]"
+                                  : "text-orange-400"
+                            }`}
+                          >
+                            {opportunity.percentage}%
+                          </span>
+                        ) : (
+                          <span className="text-xs text-gray-500">
+                            Not available
+                          </span>
+                        )}
+                      </div>
+
+                      {opportunity.percentage !== null ? (
+                        <>
+                          <div className="h-2 overflow-hidden rounded-full bg-white/10">
+                            <div
+                              className="h-full rounded-full bg-[#f5c451] transition-all duration-500"
+                              style={{ width: `${opportunity.percentage}%` }}
+                            />
+                          </div>
+
+                          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                            <div>
+                              <p className="mb-2 text-xs font-medium text-emerald-400">
+                                SKILLS YOU HAVE ({opportunity.matchedSkills.length})
+                              </p>
+
+                              <div className="flex flex-wrap gap-2">
+                                {opportunity.matchedSkills.length > 0 ? (
+                                  opportunity.matchedSkills.map((skill) => (
+                                    <span
+                                      key={skill.id}
+                                      className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1.5 text-xs text-emerald-300"
+                                    >
+                                      ✓ {skill.name}
+                                    </span>
+                                  ))
+                                ) : (
+                                  <span className="text-xs text-gray-500">
+                                    No matching skills yet
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            <div>
+                              <p className="mb-2 text-xs font-medium text-orange-400">
+                                SKILLS TO DEVELOP ({opportunity.missingSkills.length})
+                              </p>
+
+                              <div className="flex flex-wrap gap-2">
+                                {opportunity.missingSkills.length > 0 ? (
+                                  opportunity.missingSkills.map((skill) => (
+                                    <span
+                                      key={skill.id}
+                                      className="rounded-lg border border-orange-500/20 bg-orange-500/10 px-2.5 py-1.5 text-xs text-orange-300"
+                                    >
+                                      {skill.name}
+                                    </span>
+                                  ))
+                                ) : (
+                                  <span className="text-xs text-gray-500">
+                                    You have all the required skills!
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <p className="text-xs leading-5 text-gray-400">
+                          This opportunity has no specific skill requirements, so a
+                          match percentage cannot be calculated.
+                        </p>
+                      )}
+                    </div>
 
                       <div className="mt-auto flex flex-wrap items-center justify-between gap-3 border-t border-white/10 pt-5 mt-6">
                         <button
