@@ -75,7 +75,7 @@ export default function DashboardLayout({
     },
     {
       label: "Company Profile",
-      href: "/employer/company",
+      href: "/employer/company-profile",
       icon: UserRound,
     },
   ];
